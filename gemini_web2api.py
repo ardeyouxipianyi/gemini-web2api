@@ -415,12 +415,20 @@ def fetch_xsrf_token() -> Optional[str]:
             urllib.request.HTTPSHandler(context=ctx))
         resp = opener.open(req, timeout=20)
         html = resp.read().decode("utf-8", errors="replace")
-        m = re.search(r'"FdrFJe"\s*:\s*"(-?\d+)"', html)
+        # 首选：完整的 SNlM0e（含冒号与时间戳）
+        m = re.search(r'"SNlM0e"\s*:\s*"([A-Za-z0-9_\-]+:\d{8,})"', html)
         if m:
             return m.group(1)
-        m2 = re.search(r'SNlM0e[\'":=\s]*([A-Za-z0-9_\-]{10,})', html)
+        # 次选：SNlM0e 可能不带时间戳后缀
+        m2 = re.search(r'"SNlM0e"\s*:\s*"([A-Za-z0-9_\-]{15,})"', html)
         if m2:
             return m2.group(1)
+        # 最后兜底：FdrFJe（注意：这只是会话 ID，不是 XSRF token）
+        m3 = re.search(r'"FdrFJe"\s*:\s*"(-?\d+)"', html)
+        if m3:
+            log("WARNING: SNlM0e not found; falling back to FdrFJe (session id, "
+                "not a real xsrf token) — upstream may reject with xsrf 400")
+            return m3.group(1)
         return None
     except Exception as e:
         log(f"xsrf fetch failed: {e}")
