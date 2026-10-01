@@ -395,11 +395,19 @@ def update_bl_if_needed() -> bool:
 
 
 def fetch_xsrf_token() -> Optional[str]:
-    """Fetch the current xsrf token (FdrFJe) from the signed-in Gemini page.
+    """Fetch the current xsrf token (SNlM0e) from the signed-in Gemini page.
 
-    The token moves over time (SNlM0e -> FdrFJe); we probe both. Needed for
-    authenticated StreamGenerate calls; without it requests can be downgraded
-    or rejected. Returns the raw token string or None on failure.
+    MUST send SNlM0e verbatim: it looks like
+        "AIaPT3Nf6-OwMfS0dnpZKG5SHwQ4:1790841775902"
+    i.e. ~28 chars + ':' + a 13-digit timestamp (42 chars total).
+
+    WARNING: FdrFJe is NOT the xsrf token — it is a plain 18/20-digit session
+    id. Sending it as `at=` makes upstream answer
+        [["er",...,400,...,[{"...":["xsrf",
+            "AIaPT3Nf6-OwMfS0dnpZKG5SHwQ4:1790841775902",["<account id>"]]}]]]
+    which is exactly the "HTTP Error 400: Bad Request" seen when the auth file
+    carries no xsrf_token. So SNlM0e is tried first and FdrFJe only remains as a
+    last-resort fallback (kept for older page layouts where it still worked).
     """
     try:
         req = urllib.request.Request(
@@ -1061,6 +1069,8 @@ class GeminiHandler(BaseHTTPRequestHandler):
                 self._handle_google_generate(body, stream=True)
             elif ":generateContent" in self.path:
                 self._handle_google_generate(body, stream=False)
+            elif self.path == "/messages" or self.path.endswith("/messages"):
+                self._handle_search(body)
             else:
                 self.send_json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):
@@ -1416,6 +1426,162 @@ class GeminiHandler(BaseHTTPRequestHandler):
                 "usage": {"prompt_tokens": len(prompt)//4, "completion_tokens": len(text)//4,
                           "total_tokens": (len(prompt)+len(text))//4},
             })
+
+    def _handle_search(self, body: bytes):
+        """Handle Anthropic Messages API requests for DSH web_search.
+        
+        When DSH's web-search-deepseek provider is configured with
+        baseURL=http://127.0.0.1:8081, it sends requests to /messages in
+        Anthropic format. This method routes them through Gemini Web's
+        native search capability (free) instead of DeepSeek API (paid).
+        
+        Retry: one retry on failure, then return error to DSH for its own retry.
+        """
+        req = json.loads(body)
+        # Extract search query from Anthropic Messages format
+        msgs = req.get("messages", [])
+        query = ""
+        for m in msgs:
+            c = m.get("content", "")
+            if isinstance(c, str):
+                query = c
+                break
+            elif isinstance(c, list):
+                for part in c:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        query = part.get("text", "")
+                        break
+        if not query:
+            for t in req.get("tools", []):
+                q = t.get("queries", []) if isinstance(t, dict) else []
+                if q:
+                    query = ", ".join(q)
+                    break
+        if not query:
+            query = req.get("content", "")
+
+        log(f"[Search] query: {query[:80]}")
+        result_text = self._execute_search(query)
+        
+        # Return Anthropic Messages API format
+        response = {
+            "id": f"msg_{uuid.uuid4().hex[:12]}",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": result_text}],
+            "model": req.get("model", "gemini-3.8-flash"),
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": len(query) // 4, "output_tokens": len(result_text) // 4},
+        }
+        self.send_json(response)
+        log(f"[Search] done: {len(result_text)}B result")
+
+    def _execute_search(self, query: str) -> str:
+        """Execute search via Gemini Web RPC with retry.
+        
+        Returns formatted search result text, or error message.
+        """
+        max_retries = 1
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                cookie_str, sapisid = load_cookie()
+                if not cookie_str:
+                    last_error = "No cookie loaded"
+                    continue
+                
+                xsrf = CONFIG.get("xsrf_token") or ""
+                bl = CONFIG.get("gemini_bl")
+                if not bl:
+                    last_error = "No gemini_bl"
+                    continue
+                
+                search_prompt = (
+                    f"Please use Google Search to find information about: {query}\n"
+                    f"Search for the latest information on this topic and provide:\n"
+                    f"1. A brief summary of the search results\n"
+                    f"2. Key facts and details\n"
+                    f"3. Relevant source URLs if available"
+                )
+                
+                inner = [None] * 80
+                inner[0] = [search_prompt, 0, None, None, None, None, 0]
+                inner[1] = ["en"]
+                inner[2] = ["", "", "", None, None, None, None, None, None, ""]
+                inner[6] = [0]
+                inner[7] = 1
+                inner[10] = 1
+                inner[11] = 0
+                inner[17] = [[0]]  # think=0 for fast search
+                inner[18] = 0
+                inner[27] = 1
+                inner[30] = [4]
+                inner[41] = [1]  # temporary chats for search
+                inner[45] = 1
+                inner[53] = 0
+                inner[59] = str(uuid.uuid4())
+                inner[61] = []
+                inner[68] = 1
+                inner[79] = 1  # model_id for 3.8-flash
+
+                params = {"f.req": json.dumps([None, json.dumps(inner)])}
+                if xsrf:
+                    params["at"] = xsrf
+                body = urllib.parse.urlencode(params).encode()
+                reqid = int(time.time()) % 1000000
+                prefix = account_prefix()
+                url = (
+                    f"https://gemini.google.com{prefix}/_/BardChatUi/data/"
+                    "assistant.lamda.BardFrontendService/StreamGenerate"
+                    f"?bl={bl}&hl=en&_reqid={reqid}&rt=c"
+                )
+                headers = {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": "https://gemini.google.com",
+                    "Referer": f"https://gemini.google.com{prefix}/app",
+                    "X-Same-Domain": "1",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Cookie": cookie_str,
+                }
+                if CONFIG.get("auth_user") is not None:
+                    headers["X-Goog-AuthUser"] = str(CONFIG["auth_user"])
+                if sapisid:
+                    ts = int(time.time())
+                    h = hashlib.sha1(f"{ts} {sapisid} https://gemini.google.com".encode()).hexdigest()
+                    headers["Authorization"] = f"SAPISIDHASH {ts}_{h}"
+                model_hdr = build_model_header("gemini-3.8-flash", 1)
+                if model_hdr:
+                    headers["x-goog-ext-525001261-jspb"] = model_hdr
+
+                proxy_url = CONFIG.get("proxy")
+                ctx = ssl.create_default_context()
+                if proxy_url:
+                    opener = urllib.request.build_opener(
+                        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}),
+                        urllib.request.HTTPSHandler(context=ctx))
+                else:
+                    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
+
+                t0 = time.time()
+                resp = opener.open(urllib.request.Request(url, data=body, headers=headers, method="POST"),
+                                   timeout=CONFIG.get("request_timeout_sec", 60))
+                raw = resp.read().decode("utf-8", errors="replace")
+                latency = int((time.time() - t0) * 1000)
+
+                text = extract_response_text(raw)
+                if text:
+                    log(f"[Search] {query[:40]}... → {len(text)}B ({latency}ms) attempt={attempt}")
+                    return text
+                else:
+                    last_error = f"Empty response"
+            except Exception as e:
+                last_error = str(e)
+            
+            if attempt < max_retries:
+                log(f"[Search] retry {attempt + 1}: {last_error}")
+                time.sleep(1)
+
+        return f"[Search failed after {max_retries + 1} attempts: {last_error}]"
 
     def handle_responses(self, body: bytes):
         """OpenAI Responses API for Codex CLI compatibility."""
