@@ -302,7 +302,7 @@ class GeminiHandler(BaseHTTPRequestHandler):
             emitted = 0
             finish = "stop"
             try:
-                for delta in generate_stream(prompt, model_id, think_mode, file_refs, extra_fields):
+                for delta in generate_stream(prompt, model_id, think_mode, file_refs, extra_fields, ticket):
                     full_text += delta
                     marker_pos = full_text.find(TOOL_CALL_MARKER)
                     # Without a marker, hold back the last len(marker)-1 chars so a
@@ -311,27 +311,32 @@ class GeminiHandler(BaseHTTPRequestHandler):
                     if limit > emitted:
                         send_delta(content=full_text[emitted:limit])
                         emitted = limit
-                clean, tool_calls = parse_tool_calls(full_text)
+                clean, tool_calls = parse_tool_calls(full_text, tool_names(tools))
                 if tool_calls:
                     log(f"Chat tool-fenced streaming: parsed {len(tool_calls)} tool call(s)")
                     if len(clean) > emitted:
                         send_delta(content=clean[emitted:])
                     for i, tc in enumerate(tool_calls):
+                        fn = tc.get("function", {}) or {}
+                        # One complete delta per call. OpenAI spec requires the
+                        # `index` field on streaming tool_calls deltas.
                         send_delta(tool_calls=[{
                             "index": i,
-                            "id": tc["id"],
+                            "id": tc.get("id"),
                             "type": "function",
                             "function": {
-                                "name": tc["function"]["name"],
-                                "arguments": tc["function"]["arguments"],
+                                "name": fn.get("name", ""),
+                                "arguments": fn.get("arguments", "") or "",
                             },
                         }])
                     finish = "tool_calls"
                 else:
-                    # No (or malformed) tool call: forward whatever is still
-                    # buffered, raw, so nothing disappears silently.
-                    if len(full_text) > emitted:
-                        send_delta(content=full_text[emitted:])
+                    # No (or rejected) tool call: forward the cleaned tail when a
+                    # fence was stripped, otherwise the raw buffer, so nothing
+                    # disappears silently and no rejected fence leaks as content.
+                    tail = clean[emitted:] if clean != full_text else full_text[emitted:]
+                    if tail:
+                        send_delta(content=tail)
                 send_delta(finish=finish)
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()

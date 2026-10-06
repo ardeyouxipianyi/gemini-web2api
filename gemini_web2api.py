@@ -854,14 +854,14 @@ def gemini_stream_generate_iter(prompt: str, model_id: int, think_mode: int, fil
             if HAS_HTTPX and hasattr(e, 'response') and getattr(e.response, 'status_code', 0) == 405:
                 if update_bl_if_needed():
                     log("BL updated, falling back to non-streaming for this request")
-                    raw = gemini_stream_generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket)
+                    raw = gemini_stream_generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket, model_name)
                     text = extract_response_text(raw)
                     if text:
                         yield text
                     return
             if is_xsrf_error(e) and refresh_auth():
                 log("Auth refreshed, falling back to non-streaming for this request")
-                raw = gemini_stream_generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket)
+                raw = gemini_stream_generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket, model_name)
                 text = extract_response_text(raw)
                 if text:
                     yield text
@@ -1684,7 +1684,7 @@ class GeminiHandler(BaseHTTPRequestHandler):
                     except (json.JSONDecodeError, KeyError, TypeError):
                         return None
 
-                for delta_text in gemini_stream_generate_iter(prompt, model_id, think_mode, file_refs, model_name):
+                for delta_text in gemini_stream_generate_iter(prompt, model_id, think_mode, file_refs, extra_fields, ticket, model_name):
                     full_text += delta_text
                     pending += delta_text
                     # Process the pending buffer until it stabilizes (no
@@ -1726,6 +1726,9 @@ class GeminiHandler(BaseHTTPRequestHandler):
 
                 # Final chunk: emit tool_calls (if any) + finish_reason.
                 if tool_calls:
+                    # OpenAI spec: streaming tool_calls deltas carry an index.
+                    for i, tc in enumerate(tool_calls):
+                        tc.setdefault("index", i)
                     msg = {"role": "assistant", "content": text_sent or None, "tool_calls": tool_calls}
                     finish = "tool_calls"
                 else:
