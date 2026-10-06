@@ -8,9 +8,11 @@ from urllib.parse import parse_qs
 
 from gemini_web2api.config import CONFIG, DEFAULT_CONFIG
 from gemini_web2api.gemini import _build_headers, _build_payload, upstream_echo
-from gemini_web2api.models import TICKET_HEADER, resolve_model, ticket_for
+from gemini_web2api.models import MODELS, TICKET_HEADER, resolve_model, ticket_for
 from gemini_web2api.server import GeminiHandler, ThreadedServer
 from gemini_web2api.tools import google_contents_to_prompt, messages_to_prompt
+import importlib.util
+import os
 
 
 def _decode_payload(payload):
@@ -259,6 +261,15 @@ class StreamingEndpointTests(unittest.TestCase):
             headers={"Content-Type": "application/json"},
             encode_chunked=True,
         )
+        response = connection.getresponse()
+        body = response.read().decode()
+        headers = dict(response.getheaders())
+        connection.close()
+        return response.status, headers, body
+
+    def get_json(self, path):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", path)
         response = connection.getresponse()
         body = response.read().decode()
         headers = dict(response.getheaders())
@@ -606,6 +617,72 @@ class StreamingEndpointTests(unittest.TestCase):
         finishes = [c["choices"][0]["finish_reason"] for c in chunks if c["choices"][0]["finish_reason"]]
         self.assertEqual(finishes, ["stop"])
         self.assertTrue(body.endswith("data: [DONE]\n\n"))
+    def test_v1_models_contains_flash_thinking_variants(self):
+        status, _, body = self.get_json("/v1/models")
+        self.assertEqual(status, 200)
+        model_ids = [m["id"] for m in json.loads(body)["data"]]
+        self.assertIn("gemini-3.8-flash-high", model_ids)
+        self.assertIn("gemini-3.8-flash-thinking", model_ids)
+
+
+class ModelResolutionTests(unittest.TestCase):
+    def test_thinking_variants_are_ticket_wired(self):
+        for version in ["3.8", "3.7", "3.6"]:
+            for suffix in ["-high", "-thinking"]:
+                name = "gemini-" + version + "-flash" + suffix
+                self.assertIn(name, MODELS)
+                self.assertEqual(MODELS[name]["ticket"], "flash-thinking")
+                self.assertEqual(MODELS[name]["variant"], 2)
+
+    def test_resolve_model_thinking_variant(self):
+        name, mode, think, err, extra = resolve_model("gemini-3.8-flash-high")
+        self.assertEqual(name, "gemini-3.8-flash-high")
+        self.assertEqual(mode, 1)
+        self.assertEqual(think, 1)
+        self.assertIsNone(err)
+        self.assertEqual(extra, {80: 2})
+
+    def test_resolve_model_aliases(self):
+        cases = {
+            "gemini-3.8-flash:high": "gemini-3.8-flash-high",
+            "gemini-3.8-flash (high)": "gemini-3.8-flash-high",
+            "3.8-flash-high": "gemini-3.8-flash-high",
+            "3.8 flash high": "gemini-3.8-flash-high",
+            "3.6-flash": "gemini-3.6-flash",
+            "3.5-flash": "gemini-3.6-flash",
+            "gemini-3.5-flash": "gemini-3.6-flash",
+            "pro": "gemini-3.1-pro",
+            "pro-enhanced": "gemini-3.1-pro",
+            "auto": "gemini-auto",
+        }
+        for alias, expected in cases.items():
+            name, mode, think, err, extra = resolve_model(alias)
+            self.assertEqual(name, expected, alias)
+            self.assertIsNone(err, alias)
+
+    def test_think_suffix_overrides_depth(self):
+        name, mode, think, err, extra = resolve_model("gemini-3.6-flash-thinking@think=2")
+        self.assertEqual(name, "gemini-3.6-flash-thinking")
+        self.assertEqual(think, 2)
+        self.assertEqual(extra, {80: 2})
+        self.assertIsNone(err)
+
+    def test_single_file_resolves_variants_and_aliases(self):
+        script_path = os.path.join(os.path.dirname(__file__), "..", "gemini_web2api.py")
+        spec = importlib.util.spec_from_file_location("gemini_web2api_standalone", script_path)
+        standalone = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(standalone)
+        handler = standalone.GeminiHandler
+        name, mode, think, err, extra = handler._resolve_model(None, "gemini-3.8-flash-high")
+        self.assertEqual(name, "gemini-3.8-flash-high")
+        self.assertEqual(mode, 1)
+        self.assertEqual(think, 1)
+        self.assertIsNone(err)
+        self.assertEqual(extra, {80: 2})
+        for alias in ["gemini-3.8-flash:high", "gemini-3.8-flash (high)", "3.8-flash-high", "3.8 flash high"]:
+            name, mode, think, err, extra = handler._resolve_model(None, alias)
+            self.assertEqual(name, "gemini-3.8-flash-high")
+            self.assertIsNone(err)
 
 
 if __name__ == "__main__":

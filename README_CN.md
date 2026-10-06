@@ -79,13 +79,19 @@ gemini
 | 模型 | 说明 | 输出 |
 |------|------|--------|
 | `gemini-3.8-flash` | 全能模型别名 (最新 Flash 家族) | ~1.2万字符 |
+| `gemini-3.8-flash-thinking` | Flash 扩展思考 (3.8 名称) | **~2万字符** |
+| `gemini-3.8-flash-high` | gemini-3.8-flash-thinking 别名 | **~2万字符** |
 | `gemini-3.7-flash` | 全能模型别名 (Gemini 3.7 Flash) | ~1.2万字符 |
+| `gemini-3.7-flash-thinking` | Flash 扩展思考 (3.7 名称) | **~2万字符** |
+| `gemini-3.7-flash-high` | gemini-3.7-flash-thinking 别名 | **~2万字符** |
 | `gemini-3.6-flash` | 全能模型 (网页版 Flash) | ~1.2万字符 |
 | `gemini-3.6-flash-thinking` | Flash 扩展思考 | **~2万字符** |
+| `gemini-3.6-flash-high` | gemini-3.6-flash-thinking 别名 | **~2万字符** |
 | `gemini-3.5-flash-lite` | 高性价比、大容量 | ~1万字符 |
 | `gemini-3.5-flash-thinking-lite` | Flash-Lite 扩展思考 | ~1.5万字符 |
 | `gemini-3.1-pro` | 高阶数学与代码 (需 cookie) | ~1.2万字符 |
 | `gemini-3.1-pro-thinking` | Pro 扩展思考 | **~2万字符** |
+| `gemini-auto` | 自动: 账号默认模型 | 不定 |
 
 ### 思考深度
 

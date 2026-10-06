@@ -89,11 +89,17 @@ Supports Google native API endpoints:
 | Model | Description | Output |
 |-------|-------------|--------|
 | `gemini-3.8-flash` | Alias of the Flash family (latest served Flash) | ~12k chars |
+| `gemini-3.8-flash-thinking` | Extended thinking on Flash (3.8 name) | **~20k chars** |
+| `gemini-3.8-flash-high` | Alias of gemini-3.8-flash-thinking | **~20k chars** |
 | `gemini-3.7-flash` | Alias of the Flash family (Gemini 3.7 Flash) | ~12k chars |
+| `gemini-3.7-flash-thinking` | Extended thinking on Flash (3.7 name) | **~20k chars** |
+| `gemini-3.7-flash-high` | Alias of gemini-3.7-flash-thinking | **~20k chars** |
 | `gemini-3.6-flash` | All-around model (web UI Flash) | ~12k chars |
 | `gemini-3.6-flash-thinking` | Extended thinking on Flash | **~20k chars** |
+| `gemini-3.6-flash-high` | Alias of gemini-3.6-flash-thinking | **~20k chars** |
 | `gemini-3.5-flash-lite` | Cost-efficient, high capacity | ~10k chars |
 | `gemini-3.5-flash-thinking-lite` | Extended thinking on Flash-Lite | ~15k chars |
+| `gemini-auto` | Auto: account default model | varies |
 | `gemini-3.1-pro` | Advanced math & code (needs cookie) | ~12k chars |
 | `gemini-3.1-pro-thinking` | Extended thinking on Pro | **~20k chars** |
 

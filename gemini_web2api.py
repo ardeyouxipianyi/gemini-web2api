@@ -171,14 +171,67 @@ CONFIG = dict(DEFAULT_CONFIG)
 TICKET_HEADER = "X-Goog-Ext-525001261-Jspb"
 
 MODELS = {
+    # Gemini 3.8
     "gemini-3.8-flash": {
         "mode": 1, "think": 4, "variant": 1, "ticket": "flash",
         "desc": "Alias of the Flash family (latest served Flash)",
     },
+    "gemini-3.8-flash-high": {
+        "mode": 2, "think": 0,
+        "desc": "Latest all-around model with high thinking depth (Gemini 3.8 Flash High, ~20k chars)",
+    },
+    "gemini-3.8-flash-thinking": {
+        "mode": 2, "think": 0,
+        "desc": "Deep thinking mode (Gemini 3.8 Flash), longest output (~20k chars)",
+    },
+    "gemini-3.8-flash-thinking@think=0": {
+        "mode": 2, "think": 0,
+        "desc": "Gemini 3.8 Flash thinking mode - deepest reasoning (~20k chars)",
+    },
+    "gemini-3.8-flash-thinking@think=2": {
+        "mode": 2, "think": 2,
+        "desc": "Gemini 3.8 Flash thinking mode - medium reasoning (~15k chars)",
+    },
+    "gemini-3.8-flash-thinking@think=4": {
+        "mode": 2, "think": 4,
+        "desc": "Gemini 3.8 Flash thinking mode - shallowest reasoning (~12k chars)",
+    },
+    "gemini-3.8-flash@think=0": {
+        "mode": 1, "think": 0,
+        "desc": "Gemini 3.8 Flash with deep thinking (think=0)",
+    },
+
+    # Gemini 3.7
     "gemini-3.7-flash": {
         "mode": 1, "think": 4, "variant": 1, "ticket": "flash",
         "desc": "Alias of the Flash family (Gemini 3.7 Flash)",
     },
+    "gemini-3.7-flash-high": {
+        "mode": 2, "think": 0,
+        "desc": "Gemini 3.7 Flash with high thinking depth (~20k chars)",
+    },
+    "gemini-3.7-flash-thinking": {
+        "mode": 2, "think": 0,
+        "desc": "Deep thinking mode (Gemini 3.7 Flash), longest output (~20k chars)",
+    },
+    "gemini-3.7-flash-thinking@think=0": {
+        "mode": 2, "think": 0,
+        "desc": "Gemini 3.7 Flash thinking mode - deepest reasoning (~20k chars)",
+    },
+    "gemini-3.7-flash-thinking@think=2": {
+        "mode": 2, "think": 2,
+        "desc": "Gemini 3.7 Flash thinking mode - medium reasoning (~15k chars)",
+    },
+    "gemini-3.7-flash-thinking@think=4": {
+        "mode": 2, "think": 4,
+        "desc": "Gemini 3.7 Flash thinking mode - shallowest reasoning (~12k chars)",
+    },
+    "gemini-3.7-flash@think=0": {
+        "mode": 1, "think": 0,
+        "desc": "Gemini 3.7 Flash with deep thinking (think=0)",
+    },
+
+    # Gemini 3.6
     "gemini-3.6-flash": {
         "mode": 1, "think": 4, "variant": 1, "ticket": "flash",
         "desc": "All-around model (Gemini 3.6 Flash)",
@@ -186,6 +239,26 @@ MODELS = {
     "gemini-3.6-flash-thinking": {
         "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
         "desc": "Extended thinking on Flash",
+    },
+    "gemini-3.6-flash-high": {
+        "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
+        "desc": "Alias of gemini-3.6-flash-thinking",
+    },
+    "gemini-3.7-flash-high": {
+        "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
+        "desc": "Flash extended thinking (3.7 name)",
+    },
+    "gemini-3.7-flash-thinking": {
+        "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
+        "desc": "Flash extended thinking (3.7 name)",
+    },
+    "gemini-3.8-flash-high": {
+        "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
+        "desc": "Flash extended thinking (3.8 name)",
+    },
+    "gemini-3.8-flash-thinking": {
+        "mode": 1, "think": 1, "variant": 2, "ticket": "flash-thinking",
+        "desc": "Flash extended thinking (3.8 name)",
     },
     "gemini-3.5-flash-lite": {
         "mode": 6, "think": 4, "variant": 1, "ticket": "lite",
@@ -202,6 +275,10 @@ MODELS = {
     "gemini-3.1-pro-thinking": {
         "mode": 3, "think": 1, "variant": 2, "ticket": "pro-thinking",
         "desc": "Extended thinking on Pro",
+    },
+    "gemini-auto": {
+        "mode": 4, "think": 4,
+        "desc": "Auto: account default model (no ticket)",
     },
 }
 
@@ -231,6 +308,7 @@ MODEL_IDS = {
     "gemini-auto": None,                      # no header = account default
 }
 
+
 def build_model_header(model_name: str, model_id: int) -> Optional[str]:
     """Build the x-goog-ext-525001261-jspb model-selection header.
 
@@ -259,6 +337,59 @@ def model_header_for(model_name: str, model_id: int):
     if ticket:
         return ticket
     return build_model_header(model_name, model_id)
+
+
+
+MODEL_ALIASES = {
+    # Short names (pr-101), retargeted at the ticket-wired models above.
+    "3.8-flash": "gemini-3.8-flash",
+    "3.7-flash": "gemini-3.7-flash",
+    "3.6-flash": "gemini-3.6-flash",
+    "3.6-flash-thinking": "gemini-3.6-flash-thinking",
+    "3.5-flash": "gemini-3.6-flash",
+    "gemini-3.5-flash": "gemini-3.6-flash",
+    "3.5-flash-lite": "gemini-3.5-flash-lite",
+    "3.5-flash-thinking-lite": "gemini-3.5-flash-thinking-lite",
+    "flash-lite": "gemini-3.5-flash-lite",
+    "lite": "gemini-3.5-flash-lite",
+    "pro": "gemini-3.1-pro",
+    "pro-thinking": "gemini-3.1-pro-thinking",
+    "pro-enhanced": "gemini-3.1-pro",
+    "gemini-3.1-pro-enhanced": "gemini-3.1-pro",
+    "auto": "gemini-auto",
+    # Thinking-depth spellings from pr-101 ("-high" == extended thinking).
+    "gemini-3.8-flash:high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash (high)": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-thinking-high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-thinking-medium": "gemini-3.8-flash-thinking",
+    "gemini-3.8-flash-thinking-low": "gemini-3.8-flash-thinking",
+    "3.8-flash-high": "gemini-3.8-flash-high",
+    "3.8 flash high": "gemini-3.8-flash-high",
+    "3.8-flash-thinking": "gemini-3.8-flash-thinking",
+    "gemini-3.7-flash:high": "gemini-3.7-flash-high",
+    "gemini-3.7-flash (high)": "gemini-3.7-flash-high",
+    "gemini-3.7-flash-thinking-high": "gemini-3.7-flash-high",
+    "gemini-3.7-flash-thinking-medium": "gemini-3.7-flash-thinking",
+    "gemini-3.7-flash-thinking-low": "gemini-3.7-flash-thinking",
+    "3.7-flash-high": "gemini-3.7-flash-high",
+    "3.7 flash high": "gemini-3.7-flash-high",
+    "3.7-flash-thinking": "gemini-3.7-flash-thinking",
+    "gemini-3.6-flash:high": "gemini-3.6-flash-high",
+    "gemini-3.6-flash (high)": "gemini-3.6-flash-high",
+    "gemini-3.6-flash-thinking-high": "gemini-3.6-flash-high",
+    "gemini-3.6-flash-thinking-medium": "gemini-3.6-flash-thinking",
+    "gemini-3.6-flash-thinking-low": "gemini-3.6-flash-thinking",
+    "3.6-flash-high": "gemini-3.6-flash-high",
+    "3.6 flash high": "gemini-3.6-flash-high",
+    "gemini-3.5-flash-high": "gemini-3.6-flash-high",
+    "gemini-3.5-flash:high": "gemini-3.6-flash-high",
+    "gemini-3.5-flash-thinking": "gemini-3.6-flash-thinking",
+    "gemini-3.5-flash-thinking-medium": "gemini-3.6-flash-thinking",
+    "gemini-3.5-flash-thinking-low": "gemini-3.6-flash-thinking",
+    "3.5-flash-thinking": "gemini-3.6-flash-thinking",
+    "3.5-flash-high": "gemini-3.6-flash-high",
+    "3.5 flash high": "gemini-3.6-flash-high",
+}
 
 # ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -1430,17 +1561,27 @@ class GeminiHandler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length else b""
 
     def _resolve_model(self, model_name):
+        original_name = model_name
         think_override = None
         if "@think=" in model_name:
-            model_name, think_str = model_name.rsplit("@think=", 1)
-            think_override = int(think_str)
-        cfg = MODELS.get(model_name)
+            base_name, think_str = model_name.rsplit("@think=", 1)
+            try:
+                think_override = int(think_str)
+                model_name = base_name
+            except ValueError:
+                return None, None, None, f"Invalid think level: {think_str}", None
+        resolved_name = model_name
+        if resolved_name not in MODELS:
+            resolved_name = MODEL_ALIASES.get(model_name.lower().strip(), model_name)
+        cfg = MODELS.get(original_name) or MODELS.get(resolved_name)
         if not cfg:
             return None, None, None, f"Unknown model: {model_name}", None
         extra = dict(cfg.get("extra") or {})
         if "variant" in cfg and 80 not in extra:
             extra[80] = cfg["variant"]
-        return model_name, cfg["mode"], (think_override if think_override is not None else cfg["think"]), None, extra or None
+        # Return the canonical (alias-resolved) name: callers use it for the
+        # per-model ticket lookup and the response echo.
+        return resolved_name, cfg["mode"], (think_override if think_override is not None else cfg["think"]), None, extra or None
 
     def _call_gemini(self, prompt, model_id, think_mode, tools, file_refs=None, extra_fields=None, ticket=None, model_name=None):
         raw = gemini_stream_generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket, model_name)
