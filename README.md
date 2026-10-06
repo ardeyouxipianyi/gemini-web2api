@@ -88,6 +88,8 @@ Supports Google native API endpoints:
 
 | Model | Description | Output |
 |-------|-------------|--------|
+| `gemini-3.8-flash` | Alias of the Flash family (latest served Flash) | ~12k chars |
+| `gemini-3.7-flash` | Alias of the Flash family (Gemini 3.7 Flash) | ~12k chars |
 | `gemini-3.6-flash` | All-around model (web UI Flash) | ~12k chars |
 | `gemini-3.6-flash-thinking` | Extended thinking on Flash | **~20k chars** |
 | `gemini-3.5-flash-lite` | Cost-efficient, high capacity | ~10k chars |
