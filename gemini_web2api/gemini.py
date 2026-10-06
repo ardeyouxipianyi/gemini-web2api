@@ -1,6 +1,16 @@
 """Gemini StreamGenerate protocol implementation with httpx streaming."""
 from __future__ import annotations
 
+import json
+import time
+import uuid
+import re
+import random
+import threading
+import urllib.request
+import urllib.parse
+import ssl
+import os
 import hashlib
 import json
 import os
@@ -31,6 +41,20 @@ from .generated_image import GenerationResult, extract_generation_result
 _ssl_ctx = None
 _cookie_cache = {"str": "", "sapisid": None, "mtime": 0}
 _httpx_client = None
+
+# Browser-like per-session RPC counter. The real Gemini web app sends an
+# ever-increasing _reqid (+100000 per RPC) for every request in a page
+# session. Deriving it from a timestamp made concurrent requests (e.g. a
+# cronjob firing while the user is chatting) send identical ids.
+_REQID_LOCK = threading.Lock()
+_REQID_NEXT = random.randrange(10000, 99999)
+
+
+def _next_reqid() -> int:
+    global _REQID_NEXT
+    with _REQID_LOCK:
+        _REQID_NEXT += 100000
+        return _REQID_NEXT
 
 
 class GeminiUpstreamError(RuntimeError):
@@ -279,12 +303,11 @@ def _build_image_payload(prompt: str, request_uuid: str, xsrf_token: str = None)
 
 
 def _get_url(session_id: str = None) -> str:
-    reqid = int(time.time()) % 1000000
     account_prefix = _account_prefix()
     params = {
         "bl": CONFIG["gemini_bl"],
         "hl": "en",
-        "_reqid": reqid,
+        "_reqid": _next_reqid(),
         "rt": "c",
     }
     if session_id:
@@ -406,27 +429,74 @@ def clean_text(text: str, strip: bool = True) -> str:
     return text.strip() if strip else text
 
 
-def _extract_texts_from_line(line: str) -> list:
-    """Parse a single wrb.fr line and return list of text strings found."""
-    if '"wrb.fr"' not in line or len(line) < 200:
-        return []
+def _iter_frames(line: str):
+    """Yield the parsed inner payload of every wrb.fr frame in one response line.
+
+    A single StreamGenerate chunk line can carry several frames; the answer,
+    thought summaries, alternative drafts, follow-up chips and image-agent
+    updates each arrive as separate frames.
+    """
+    if '"wrb.fr"' not in line or len(line) < 40:
+        return
     try:
-        arr = json.loads(line)
-        inner_str = arr[0][2]
-        if not inner_str or len(inner_str) < 50:
-            return []
-        inner = json.loads(inner_str)
-        if not (isinstance(inner, list) and len(inner) > 4 and inner[4]):
-            return []
-        texts = []
-        for part in inner[4]:
-            if isinstance(part, list) and len(part) > 1 and part[1] and isinstance(part[1], list):
-                for t in part[1]:
-                    if isinstance(t, str) and t:
-                        texts.append(t)
-        return texts
-    except (json.JSONDecodeError, IndexError, TypeError):
-        return []
+        frames = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return
+    if not isinstance(frames, list):
+        return
+    for frame in frames:
+        if not (isinstance(frame, list) and len(frame) > 2 and frame[0] == "wrb.fr"):
+            continue
+        payload = frame[2]
+        if not (isinstance(payload, str) and len(payload) >= 20):
+            continue
+        try:
+            inner = json.loads(payload)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(inner, list) and len(inner) > 4 and inner[4]:
+            yield inner
+
+
+def _candidate_texts(inner: list) -> list:
+    """Return [(candidate_index, joined_text)] for one frame payload.
+
+    Each candidate's text is a *list* of segments in the wire format and must
+    be joined; treating segments as standalone answers returned fragments.
+    """
+    out = []
+    for idx, cand in enumerate(inner[4]):
+        if isinstance(cand, list) and len(cand) > 1 and isinstance(cand[1], list):
+            text = "".join(t for t in cand[1] if isinstance(t, str))
+            if text:
+                out.append((idx, text))
+    return out
+
+
+def _is_answer_frame(inner: list) -> bool:
+    """True for the main answer frame, which carries the new conversation id
+    (inner[1], e.g. "c_...") and response id (inner[2], e.g. "r_...").
+
+    Thought summaries, follow-up chips, search and image-agent frames do not
+    carry these ids -- that is what tells them apart from the real answer.
+    """
+    if len(inner) > 2:
+        conv_id, resp_id = inner[1], inner[2]
+        return (isinstance(conv_id, str) and bool(conv_id)
+                and isinstance(resp_id, str) and bool(resp_id))
+    return False
+
+
+def _best_main_answer(line: str):
+    """Best primary-candidate answer text found in one line, or None."""
+    best = ""
+    for inner in _iter_frames(line):
+        if not _is_answer_frame(inner):
+            continue
+        for idx, text in _candidate_texts(inner):
+            if idx == 0 and len(text) > len(best):
+                best = text
+    return best or None
 
 
 def _bard_error_code(raw: str) -> int | None:
@@ -470,16 +540,33 @@ def _bard_error_code(raw: str) -> int | None:
 
 
 def extract_response_text(raw: str) -> str:
-    """Parse full response to get final text."""
+    """Parse full response to get the final answer text.
+
+    Selection order:
+      1. Primary candidate (index 0) of the main answer frame -- the frame
+         carrying conversation/response ids. Longest update wins (streaming
+         re-sends this frame as the answer grows).
+      2. Longest joined candidate from any frame (protocol drift fallback).
+    Never the thought/draft/chip frames, which previously won the "longest
+    text anywhere" heuristic and produced unrelated answers.
+    """
     bard_error_code = _bard_error_code(raw)
     if bard_error_code is not None:
         raise _upstream_error(bard_error_code)
-    last_text = ""
+    main_best = ""
+    any_best = ""
     for line in raw.split("\n"):
-        for t in _extract_texts_from_line(line):
-            if len(t) > len(last_text):
-                last_text = t
-    return clean_text(last_text)
+        for inner in _iter_frames(line):
+            cands = _candidate_texts(inner)
+            if not cands:
+                continue
+            is_main = _is_answer_frame(inner)
+            for idx, text in cands:
+                if len(text) > len(any_best):
+                    any_best = text
+                if is_main and idx == 0 and len(text) > len(main_best):
+                    main_best = text
+    return clean_text(main_best or any_best)
 
 
 def upstream_echo(raw: str):
@@ -723,14 +810,13 @@ def generate(prompt: str, model_id: int, think_mode: int, file_refs: list = None
     if load_cookie()[0] and not CONFIG.get("xsrf_token"):
         refreshed = refresh_auth()
     body = _build_payload(prompt, model_id, think_mode, file_refs, extra_fields).encode()
-    url = _get_url()
     headers = _build_headers(ticket)
     ctx = _get_ssl_ctx()
     proxy = CONFIG.get("proxy")
     last_err = None
     for attempt in range(CONFIG["retry_attempts"]):
         try:
-            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            req = urllib.request.Request(_get_url(), data=body, headers=headers, method="POST")
             if proxy:
                 opener = urllib.request.build_opener(
                     urllib.request.ProxyHandler({"http": proxy, "https": proxy}),
@@ -748,7 +834,6 @@ def generate(prompt: str, model_id: int, think_mode: int, file_refs: list = None
                 refreshed = True
                 log("Retrying with refreshed auth...")
                 body = _build_payload(prompt, model_id, think_mode, file_refs, extra_fields).encode()
-                url = _get_url()
                 headers = _build_headers(ticket)
             elif attempt < CONFIG["retry_attempts"] - 1:
                 log(f"Retry {attempt+1}/{CONFIG['retry_attempts']}: {e}")
@@ -759,8 +844,12 @@ def generate(prompt: str, model_id: int, think_mode: int, file_refs: list = None
 def generate_stream(prompt: str, model_id: int, think_mode: int, file_refs: list = None, extra_fields: dict = None, ticket: str = None):
     """Streaming generation via httpx with retry on connection failure.
 
-    File-bearing requests need Chrome TLS impersonation, so they yield one
-    non-stream result (curl_cffi path).
+    Only the primary candidate of the main answer frame is streamed.
+    Thought summaries, drafts and chip frames are ignored, deltas are only
+    emitted when the new answer extends what was already emitted, and a
+    mid-stream answer rewrite freezes the already-emitted text instead of
+    splicing unrelated frames into the output. File-bearing requests need
+    Chrome TLS impersonation, so they yield one non-stream result.
     """
     if file_refs:
         text = generate(prompt, model_id, think_mode, file_refs, extra_fields, ticket)
@@ -774,21 +863,21 @@ def generate_stream(prompt: str, model_id: int, think_mode: int, file_refs: list
         return
 
     body = _build_payload(prompt, model_id, think_mode, file_refs, extra_fields)
-    url = _get_url()
     headers = _build_headers(ticket)
     client = _get_httpx_client()
 
     last_err = None
-    emitted_raw_text = ""
     refreshed = False
     if load_cookie()[0] and not CONFIG.get("xsrf_token"):
         refreshed = refresh_auth()
         body = _build_payload(prompt, model_id, think_mode, file_refs, extra_fields)
-        url = _get_url()
         headers = _build_headers(ticket)
     for attempt in range(CONFIG["retry_attempts"]):
+        emitted_raw_text = ""
+        emitted_any = False
+        raw_lines = []
         try:
-            with client.stream("POST", url, content=body, headers=headers) as resp:
+            with client.stream("POST", _get_url(), content=body, headers=headers) as resp:
                 resp.raise_for_status()
                 buf = ""
                 for chunk in resp.iter_text():
@@ -798,23 +887,39 @@ def generate_stream(prompt: str, model_id: int, think_mode: int, file_refs: list
                         bard_error_code = _bard_error_code(line)
                         if bard_error_code is not None:
                             raise _upstream_error(bard_error_code)
-                        for t in _extract_texts_from_line(line):
-                            if t == emitted_raw_text or emitted_raw_text.startswith(t):
+                        raw_lines.append(line)
+                        current = _best_main_answer(line)
+                        if not current:
+                            continue
+                        if current == emitted_raw_text or emitted_raw_text.startswith(current):
+                            continue  # duplicate or older update
+                        if not current.startswith(emitted_raw_text):
+                            if emitted_any:
+                                log("Stream answer replaced mid-flight; keeping already-emitted text")
                                 continue
-                            if not t.startswith(emitted_raw_text):
-                                raise RuntimeError("Gemini stream content changed during retry")
-                            delta = clean_text(t[len(emitted_raw_text):], strip=False)
-                            emitted_raw_text = t
-                            if delta:
-                                yield delta
-            return
+                            emitted_raw_text = ""  # first frame was noise; adopt the real answer
+                        delta = clean_text(current[len(emitted_raw_text):], strip=False)
+                        emitted_raw_text = current
+                        if delta:
+                            emitted_any = True
+                            yield delta
+            if emitted_any:
+                return
+            # Strict parser matched nothing (protocol drift): rescan the full
+            # buffered response with the fallback tiers before giving up.
+            if raw_lines:
+                fallback = extract_response_text("\n".join(raw_lines))
+                if fallback:
+                    yield fallback
+                    return
+            last_err = RuntimeError("no answer frame in Gemini stream response")
         except GeminiUpstreamError:
             raise
         except Exception as e:
-            if emitted_raw_text:
-                # Partial content already streamed: a retry would either fail the
-                # prefix check or splice two different generations together, so end
-                # the stream cleanly and let the client ask to continue.
+            if emitted_any:
+                # Content already streamed to the client; retrying would either
+                # fail the prefix check or splice two generations together, so
+                # end the stream cleanly and let the client ask to continue.
                 log(f"Stream interrupted after partial output ({len(emitted_raw_text)} chars), ending cleanly: {e}")
                 return
             last_err = e
@@ -822,7 +927,6 @@ def generate_stream(prompt: str, model_id: int, think_mode: int, file_refs: list
                 refreshed = True
                 log("Stream retry with refreshed auth...")
                 body = _build_payload(prompt, model_id, think_mode, file_refs, extra_fields)
-                url = _get_url()
                 headers = _build_headers(ticket)
             elif attempt < CONFIG["retry_attempts"] - 1:
                 log(f"Stream retry {attempt+1}/{CONFIG['retry_attempts']}: {e}")
