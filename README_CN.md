@@ -265,9 +265,6 @@ resp = client.chat.completions.create(
 )
 ```
 
-
-## 已知限制
-
 ## 图片输出
 
 `POST /v1/images/generations` 接受文本 `prompt`、可选 `model` 与 `n: 1`。`model`
@@ -296,6 +293,8 @@ base64 输出仅使用 Chrome 模拟下载 HTTPS 的精确或子域
 - **Pro/Ultra 非真实路由**: 无付费订阅 cookie 时, `gemini-3.1-pro` 实际路由到 Flash 模型. "Pro" 只是 UI 偏好标签.
 - **单轮对话**: 每次请求是独立对话, 多轮上下文通过在 prompt 中包含历史消息模拟.
 - **频率限制**: Google 可能限制高频请求, server 会自动重试但持续高负载可能被封.
+- **匿名模式**: 未配置 cookie 时 Gemini 会忽略模型路由，所有模型名都由匿名默认模型（通常是 Flash-Lite）响应。此模式下代理不会发送模型 ticket；需要真正的模型选择请配置 cookie。
+
 ## 依赖
 
 - Python 3.8+
