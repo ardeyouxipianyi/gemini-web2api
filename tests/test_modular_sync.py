@@ -437,11 +437,21 @@ class ModelRoutingTests(unittest.TestCase):
         }
         for name, (family, variant) in cases.items():
             with self.subTest(model=name):
-                _, mode, _, err, extra = resolve_model(name)
+                with mock.patch("gemini_web2api.gemini.load_cookie",
+                                return_value=("SID=abc; SAPISID=xyz", None)):
+                    _, mode, _, err, extra = resolve_model(name)
                 self.assertIsNone(err)
                 inner = _decode_payload(_build_payload("hi", mode, 4, extra_fields=extra))
                 self.assertEqual(inner[79], family)
                 self.assertEqual(inner[80], variant)
+
+    def test_anonymous_requests_claim_no_variant(self):
+        with mock.patch("gemini_web2api.gemini.load_cookie", return_value=("", None)):
+            _, mode, _, err, extra = resolve_model("gemini-3.6-flash")
+        self.assertIsNone(err)
+        inner = _decode_payload(_build_payload("hi", mode, 4, extra_fields=extra))
+        self.assertEqual(inner[79], 1)
+        self.assertIsNone(inner[80])
 
 
 class ModelTicketTests(unittest.TestCase):
@@ -449,20 +459,27 @@ class ModelTicketTests(unittest.TestCase):
     # f.req [79]/[80] without it. Verified live: (3,1)+pro-ticket -> Pro,
     # (1,1)+flash-ticket -> Flash, (3,1)+flash-ticket -> Flash (ticket wins).
     def test_ticket_mapping(self):
-        self.assertEqual(
-            ticket_for("gemini-3.6-flash"), CONFIG["model_tickets"]["flash"])
-        self.assertEqual(
-            ticket_for("gemini-3.1-pro"), CONFIG["model_tickets"]["pro"])
-        self.assertEqual(
-            ticket_for("gemini-3.5-flash-lite"), CONFIG["model_tickets"]["lite"])
-        self.assertEqual(
-            ticket_for("gemini-3.6-flash-thinking"), CONFIG["model_tickets"]["flash-thinking"])
-        self.assertEqual(
-            ticket_for("gemini-3.5-flash-thinking-lite"), CONFIG["model_tickets"]["lite-thinking"])
-        self.assertEqual(
-            ticket_for("gemini-3.1-pro-thinking"), CONFIG["model_tickets"]["pro-thinking"])
-        self.assertIsNone(ticket_for("gemini-auto"))
-        self.assertIsNone(ticket_for("gemini-nope"))
+        with mock.patch("gemini_web2api.gemini.load_cookie",
+                        return_value=("SID=abc; SAPISID=xyz", None)):
+            self.assertEqual(
+                ticket_for("gemini-3.6-flash"), CONFIG["model_tickets"]["flash"])
+            self.assertEqual(
+                ticket_for("gemini-3.1-pro"), CONFIG["model_tickets"]["pro"])
+            self.assertEqual(
+                ticket_for("gemini-3.5-flash-lite"), CONFIG["model_tickets"]["lite"])
+            self.assertEqual(
+                ticket_for("gemini-3.6-flash-thinking"), CONFIG["model_tickets"]["flash-thinking"])
+            self.assertEqual(
+                ticket_for("gemini-3.5-flash-thinking-lite"), CONFIG["model_tickets"]["lite-thinking"])
+            self.assertEqual(
+                ticket_for("gemini-3.1-pro-thinking"), CONFIG["model_tickets"]["pro-thinking"])
+            self.assertIsNone(ticket_for("gemini-auto"))
+            self.assertIsNone(ticket_for("gemini-nope"))
+
+    def test_ticket_mapping_anonymous_is_none(self):
+        with mock.patch("gemini_web2api.gemini.load_cookie", return_value=("", None)):
+            self.assertIsNone(ticket_for("gemini-3.6-flash"))
+            self.assertIsNone(ticket_for("gemini-3.1-pro"))
 
     def test_ticket_embeds_family_variant(self):
         import json as _json
@@ -1263,7 +1280,9 @@ class ModelResolutionTests(unittest.TestCase):
                 self.assertEqual(MODELS[name]["variant"], 2)
 
     def test_resolve_model_thinking_variant(self):
-        name, mode, think, err, extra = resolve_model("gemini-3.8-flash-high")
+        with mock.patch("gemini_web2api.gemini.load_cookie",
+                        return_value=("SID=abc; SAPISID=xyz", None)):
+            name, mode, think, err, extra = resolve_model("gemini-3.8-flash-high")
         self.assertEqual(name, "gemini-3.8-flash-high")
         self.assertEqual(mode, 1)
         self.assertEqual(think, 1)
@@ -1289,11 +1308,21 @@ class ModelResolutionTests(unittest.TestCase):
             self.assertIsNone(err, alias)
 
     def test_think_suffix_overrides_depth(self):
-        name, mode, think, err, extra = resolve_model("gemini-3.6-flash-thinking@think=2")
+        with mock.patch("gemini_web2api.gemini.load_cookie",
+                        return_value=("SID=abc; SAPISID=xyz", None)):
+            name, mode, think, err, extra = resolve_model("gemini-3.6-flash-thinking@think=2")
         self.assertEqual(name, "gemini-3.6-flash-thinking")
         self.assertEqual(think, 2)
         self.assertEqual(extra, {80: 2})
         self.assertIsNone(err)
+
+
+    def test_resolve_model_anonymous_has_no_variant(self):
+        with mock.patch("gemini_web2api.gemini.load_cookie", return_value=("", None)):
+            name, mode, think, err, extra = resolve_model("gemini-3.8-flash-high")
+        self.assertEqual(name, "gemini-3.8-flash-high")
+        self.assertIsNone(err)
+        self.assertIsNone(extra)
 
     def test_single_file_resolves_variants_and_aliases(self):
         script_path = os.path.join(os.path.dirname(__file__), "..", "gemini_web2api.py")
@@ -1301,7 +1330,9 @@ class ModelResolutionTests(unittest.TestCase):
         standalone = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(standalone)
         handler = standalone.GeminiHandler
-        name, mode, think, err, extra = handler._resolve_model(None, "gemini-3.8-flash-high")
+        with mock.patch.object(standalone, "load_cookie",
+                               return_value=("SID=abc; SAPISID=xyz", None)):
+            name, mode, think, err, extra = handler._resolve_model(None, "gemini-3.8-flash-high")
         self.assertEqual(name, "gemini-3.8-flash-high")
         self.assertEqual(mode, 1)
         self.assertEqual(think, 1)

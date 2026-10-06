@@ -304,6 +304,10 @@ the hard 10 MiB / three-redirect caps.
 
 ## Limitations
 
+- **Anonymous mode**: without a cookie, Gemini ignores model routing and
+  serves its anonymous default model (usually Flash-Lite) for every model
+  name. The proxy therefore sends no model ticket in this mode; add a cookie
+  if you need real model selection.
 - **Image requests require `curl_cffi` and may require cookies**: Multimodal input and generated-image output use Chrome-impersonated requests. If upload or generation fails, configure a Gemini cookie. Image input streaming returns one complete result rather than incremental text.
 - **Generated image protocol can change**: Image output uses Gemini's undocumented GUI payload and full-size RPC. The server falls back to the validated preview when full-size RPC resolution is unavailable; edits, caching, and proxying are not implemented.
 - **Not real Pro/Ultra**: Without a paid subscription cookie, `gemini-3.1-pro` routes to the same Flash model. The "Pro" label is a UI preference, not a backend model switch.

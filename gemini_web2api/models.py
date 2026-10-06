@@ -188,9 +188,15 @@ MODEL_ALIASES = {
 def ticket_for(model_name: str):
     """Return the upstream ticket header value for a model, or None.
 
-    Looks up the model's ticket key in CONFIG["model_tickets"].
+    Looks up the model's ticket key in CONFIG["model_tickets"]. Tickets only
+    steer routing for a signed-in session, so anonymous requests get None:
+    sending a captured ticket without a cookie makes upstream try to serve a
+    family the anonymous session cannot use (empty or error responses).
     """
     from .config import CONFIG
+    from .gemini import load_cookie
+    if not load_cookie()[0]:
+        return None
     cfg = MODELS.get(model_name) or {}
     key = cfg.get("ticket")
     if not key:
@@ -204,6 +210,9 @@ def resolve_model(model_name: str, default: str = "gemini-3.6-flash"):
     Unknown model names fall back to default rather than erroring,
     since upstream clients may request arbitrary model identifiers.
     """
+    from .gemini import load_cookie
+
+    signed_in = bool(load_cookie()[0])
     original_name = model_name
     think_override = None
     if "@think=" in model_name:
@@ -228,7 +237,9 @@ def resolve_model(model_name: str, default: str = "gemini-3.6-flash"):
     mode_id = cfg["mode"]
     think_mode = think_override if think_override is not None else cfg["think"]
     extra = dict(cfg.get("extra") or {})
-    if "variant" in cfg and 80 not in extra:
+    if "variant" in cfg and 80 not in extra and signed_in:
+        # Anonymous sessions cannot route a variant; claiming one without a
+        # ticket makes upstream reject or stall the request.
         extra[80] = cfg["variant"]
     # Return the canonical (alias-resolved) name: callers use it for the
     # per-model ticket lookup and the response echo.

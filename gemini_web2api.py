@@ -286,7 +286,14 @@ MODELS = {
 
 
 def ticket_for(model_name: str):
-    """Return the upstream ticket header value for a model, or None."""
+    """Return the upstream ticket header value for a model, or None.
+
+    Tickets only steer routing for a signed-in session, so anonymous requests
+    get None: sending a captured ticket without a cookie makes upstream try to
+    serve a family the anonymous session cannot use (empty/error responses).
+    """
+    if not load_cookie()[0]:
+        return None
     key = (MODELS.get(model_name) or {}).get("ticket")
     if not key:
         return None
@@ -319,6 +326,8 @@ def build_model_header(model_name: str, model_id: int) -> Optional[str]:
     idx4 = model selector; idx14 must equal payload slot79; idx15 = slot80.
     Returns None for models without a known internal ID (-> account default).
     """
+    if not load_cookie()[0]:
+        return None  # anonymous sessions cannot route; leave the header off
     mid = MODEL_IDS.get(model_name)
     if not mid:
         return None
@@ -1039,8 +1048,11 @@ def check_routing(raw: str, model_id: int, extra_fields: dict = None, ticket: st
     """Log a warning when upstream served a different model than requested.
 
     When a ticket is used it wins over the body fields, so expectations are
-    read from the ticket's embedded (family, variant).
+    read from the ticket's embedded (family, variant). Anonymous sessions are
+    skipped: without a cookie upstream always serves its anonymous default.
     """
+    if not load_cookie()[0]:
+        return
     echo = upstream_echo(raw)
     if not echo:
         return
@@ -1655,7 +1667,9 @@ class GeminiHandler(BaseHTTPRequestHandler):
         if not cfg:
             return None, None, None, f"Unknown model: {model_name}", None
         extra = dict(cfg.get("extra") or {})
-        if "variant" in cfg and 80 not in extra:
+        if "variant" in cfg and 80 not in extra and load_cookie()[0]:
+            # Anonymous sessions cannot route a variant; claiming one without a
+            # ticket makes upstream reject or stall the request.
             extra[80] = cfg["variant"]
         # Return the canonical (alias-resolved) name: callers use it for the
         # per-model ticket lookup and the response echo.

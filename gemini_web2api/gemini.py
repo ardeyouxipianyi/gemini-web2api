@@ -592,8 +592,11 @@ def check_routing(raw: str, model_id: int, extra_fields: dict = None, ticket: st
     """Log a warning when upstream served a different model than requested.
 
     When a ticket is used it wins over the body fields, so expectations are
-    read from the ticket's embedded (family, variant).
+    read from the ticket's embedded (family, variant). Anonymous sessions are
+    skipped: without a cookie upstream always serves its anonymous default.
     """
+    if not load_cookie()[0]:
+        return
     echo = upstream_echo(raw)
     if not echo:
         return
