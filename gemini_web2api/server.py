@@ -207,6 +207,37 @@ class GeminiHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
+    def _chunk(self, cid, model_name, delta, finish_reason=None):
+        return {"id": cid, "object": "chat.completion.chunk", "created": int(time.time()),
+                "model": model_name,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
+
+    def _stream_tool_calls(self, cid, model_name, tool_calls, arg_slice=120):
+        """Emit tool calls as OpenAI-spec streaming deltas.
+
+        Each call gets an `index` (required by clients to assemble split
+        arguments), followed by argument slices, then a `tool_calls`
+        finish chunk.
+        """
+        self.wfile.write(
+            f"data: {json.dumps(self._chunk(cid, model_name, {'role': 'assistant'}), ensure_ascii=False)}\n\n".encode())
+        for i, tc in enumerate(tool_calls):
+            fn = tc.get("function", {})
+            head = {"role": "assistant",
+                    "tool_calls": [{"index": i, "id": tc.get("id"), "type": "function",
+                                    "function": {"name": fn.get("name", ""), "arguments": ""}}]}
+            self.wfile.write(
+                f"data: {json.dumps(self._chunk(cid, model_name, head), ensure_ascii=False)}\n\n".encode())
+            args = fn.get("arguments", "") or ""
+            for j in range(0, len(args), arg_slice):
+                piece = {"tool_calls": [{"index": i, "function": {"arguments": args[j:j + arg_slice]}}]}
+                self.wfile.write(
+                    f"data: {json.dumps(self._chunk(cid, model_name, piece), ensure_ascii=False)}\n\n".encode())
+        self.wfile.write(
+            f"data: {json.dumps(self._chunk(cid, model_name, {}, 'tool_calls'))}\n\n".encode())
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
     def _handle_chat(self, body: bytes):
         req = self._parse_body(body)
         if req is None:
