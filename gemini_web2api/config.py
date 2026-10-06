@@ -32,6 +32,9 @@ DEFAULT_CONFIG = {
         "lite-thinking": '[1,null,null,null,"cf41b0e0dd7d53e5",null,null,0,[4,5,6,8,4,5,6,8],null,null,1,null,null,6,2,"279B5F21-C196-4B10-8EC7-31625C0CABE6",null,null,[[2,950300000],[1789899759,320000000]]]',
         "pro-thinking": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4,5,6,8,4,5,6,8],null,null,1,null,null,3,2,"279B5F21-C196-4B10-8EC7-31625C0CABE6",null,null,[[null,85000000],[1789900208,389000000]]]',
     },
+    # Generated image output only; values above the hard safety caps are ignored.
+    "generated_image_max_bytes": 10 * 1024 * 1024,
+    "generated_image_max_redirects": 3,
 }
 
 CONFIG = dict(DEFAULT_CONFIG)
